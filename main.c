@@ -59,6 +59,61 @@
 			
  }
 
+void TIM5_Init(void)
+{
+    // fonction de Evariste
+    /* --- Horloges --- */
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;   /* port A */
+    RCC->APB1ENR |= RCC_APB1ENR_TIM5EN;    /* TIM5   */
+
+    /* --- PA1 en fonction alternee AF2 (TIM5_CH2 = TI2) --- */
+    GPIOA->MODER  &= ~(3u  << (1u*2u));
+    GPIOA->MODER  |=  (2u  << (1u*2u));     /* mode AF                       */
+    GPIOA->PUPDR  &= ~(3u  << (1u*2u));     /* pas de pull (sortie capteur)  */
+    GPIOA->AFR[0] &= ~(0xFu << (1u*4u));
+    GPIOA->AFR[0] |=  (0x2u << (1u*4u));    /* AF2 = TIM5                    */
+
+    /* --- Base de temps : tick = 1 us, overflow = 100 ms ---
+       En supposant TIMx_CLK = 180 MHz comme dans les TP precedents.
+       180 MHz / (PSC+1) = 1 MHz  ->  PSC = 179  ->  1 tick = 1 us          */
+    TIM5->PSC = 179u;
+    TIM5->ARR = 100000u - 1u;              /* 100 000 us = 100 ms (TIM5 = 32 bits) */
+
+    /* Seul l'overflow doit lever UIF : sinon le reset esclave a chaque
+       front declencherait une fausse IT d'update.                          */
+    TIM5->CR1 |= TIM_CR1_URS;
+
+    /* --- Canal 2 en capture sur TI2 (CCMR1 AVANT CCER) --- */
+    TIM5->CCMR1 &= ~TIM_CCMR1_CC2S;
+    TIM5->CCMR1 |=  TIM_CCMR1_CC2S_0;      /* CC2S = 01 : IC2 sur TI2       */
+    /* (option : filtre IC2F dans CCMR1 pour l'anti-rebond)                 */
+
+    /* --- Front descendant + activation de la capture --- */
+    TIM5->CCER &= ~(TIM_CCER_CC2P | TIM_CCER_CC2NP);
+    TIM5->CCER |=  TIM_CCER_CC2P;          /* CC2P = 1 : front descendant   */
+    TIM5->CCER |=  TIM_CCER_CC2E;          /* autorise la capture           */
+
+    /* --- Mode esclave RESET sur TI2FP2 : CNT remis a 0 a chaque front --- */
+    TIM5->SMCR &= ~(TIM_SMCR_TS | TIM_SMCR_SMS);
+    TIM5->SMCR |=  (TIM_SMCR_TS_2 | TIM_SMCR_TS_1);  /* TS  = 110 : TI2FP2  */
+    TIM5->SMCR |=  TIM_SMCR_SMS_2;                   /* SMS = 100 : reset   */
+
+    /* --- Interruptions : capture canal 2 + overflow --- */
+    TIM5->DIER |= TIM_DIER_CC2IE | TIM_DIER_UIE;
+
+    /* --- Chargement PSC/ARR puis nettoyage des flags --- */
+    TIM5->EGR |= TIM_EGR_UG;
+    TIM5->SR   = 0;
+
+    /* --- NVIC --- */
+    NVIC_SetPriority(TIM5_IRQn, 2);
+    NVIC_ClearPendingIRQ(TIM5_IRQn);
+    NVIC_EnableIRQ(TIM5_IRQn);
+
+    /* --- Demarrage --- */
+    TIM5->CR1 |= TIM_CR1_CEN;
+}
+
 void TIM2_IRQHandler()
  {
 	 if ((TIM2->SR & TIM_SR_UIF) != 0)
