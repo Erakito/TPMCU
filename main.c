@@ -27,7 +27,15 @@
  
  uint32_t indexTime = 0;
  uint32_t nbrUn = 0;
+ float distance = 0;
  
+ float computeDistance(int nb)
+ {
+	 float dist = 0;
+	 dist = (float)nb * 100;
+	 dist = dist / 58.235;
+	 return dist;
+ }
  
  void UltraSoundmgt () {
 		switch(currentState) {
@@ -45,8 +53,9 @@
 				GPIOA->ODR &= ~GPIO_ODR_OD12; // Trig à 0
 				indexTime++;
 			
-				if ((GPIOA->IDR & GPIO_IDR_ID8) == 1) {
+				if ((GPIOA->IDR & GPIO_IDR_ID8) != 0) {
 					nbrUn ++;
+					distance = computeDistance(nbrUn);
 				}	
 					
 			
@@ -59,6 +68,7 @@
 			
  }
 
+ 
 void TIM2_IRQHandler()
  {
 	 if ((TIM2->SR & TIM_SR_UIF) != 0)
@@ -88,7 +98,7 @@ int main(void)
 	
 	//init GPIO alternante fonction for interruption
 	GPIOA->MODER &=~ (GPIO_MODER_MODE5_Msk | GPIO_MODER_MODE12_Msk | GPIO_MODER_MODE8_Msk); // init PA5 
-	GPIOA->MODER |= GPIO_MODER_MODE5_0 | GPIO_MODER_MODE12_0; // PA5 output
+	GPIOA->MODER |= GPIO_MODER_MODE5_0 | GPIO_MODER_MODE12_0; // PA5 PA12 output
 	
 	
 	//inti timer
