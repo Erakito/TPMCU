@@ -17,59 +17,62 @@
  * \details   
  * \return    \e none.
  */
- 
- typedef enum State {
-	 STATE_GEN,
-	 STATE_REC,
- } State;
- 
- State currentState = STATE_REC;
- 
- uint32_t indexTime = 0;
- uint32_t nbrUn = 0;
- 
- 
- void UltraSoundmgt () {
-		switch(currentState) {
-			case STATE_GEN :
-				GPIOA->ODR |= GPIO_ODR_OD12; // Trig à 1
-				indexTime ++;
-				nbrUn = 0;
-			
-				if(indexTime >= 1) {
-					currentState = STATE_REC;
-				}
-				break;
-			
-			case STATE_REC :
-				GPIOA->ODR &= ~GPIO_ODR_OD12; // Trig à 0
-				indexTime++;
-			
-				if ((GPIOA->IDR & GPIO_IDR_ID8) == 1) {
-					nbrUn ++;
-				}	
-					
-			
-				if (indexTime >= 500) {
-					indexTime = 0;
-					currentState = STATE_GEN;
-				}
-				break;
-			}
-			
- }
 
-void TIM2_IRQHandler()
- {
-	 if ((TIM2->SR & TIM_SR_UIF) != 0)
-	 {
-		 TIM2->SR &=~ TIM_SR_UIF;
-		 GPIOA->ODR ^= GPIO_ODR_OD5;
-		 
-		 UltraSoundmgt();
-	 }
- }
- 
+uint32_t prevCCR = 0;
+uint32_t delta;
+uint32_t receiveBits;
+uint32_t bitsCount;
+uint32_t isRecieve;
+
+void inputBits(uint32_t bit)
+{
+	if (bit == 0)
+	{
+		receiveBits = receiveBits >> 1; //on ajoute un zéro
+	}
+	else
+	{
+		receiveBits = (receiveBits >> 1) | 0x80000000; // on décalle puis on ajoute 1
+	}
+	bitsCount++;
+	if (bitsCount >= 32)
+	{
+		isRecieve = 1;
+	}
+	else
+	{
+		isRecieve = 0;
+	}
+}
+
+
+void TIM5_IRQHandler()
+{
+	if ((TIM5->SR & TIM_SR_CC2IF)!= 0)
+	{
+		TIM5->SR &=~ TIM_SR_CC2IF;
+		if ((TIM5->CCR2 > 2200) && (TIM5->CCR2 <= 2600))
+		{
+			receiveBits = 0;
+			bitsCount = 0;
+		}
+		if ((TIM5->CCR2 < 400))
+		{
+			inputBits(0);
+		}
+		else
+		{
+			inputBits(1);
+		}
+	}
+	else if ((TIM5->SR & TIM_SR_UIF) != 0)
+	{
+		TIM5->SR &=~ TIM_SR_UIF;
+		receiveBits = 0;
+		bitsCount = 0;
+	}
+}
+
 int main(void)
 {
 
@@ -78,34 +81,38 @@ int main(void)
 	
 	//init clk
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; // enable clock on gpiob
-	RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+	RCC->APB1ENR |= RCC_APB1ENR_TIM5EN;
 	
 	//init GPIO alternante fonction for TIMER
 	GPIOA->MODER &=~ GPIO_MODER_MODE1_Msk;
 	GPIOA->MODER |= GPIO_MODER_MODE1_1; // Alternante Fonction 
-	GPIOA->AFR[0] &=~ GPIO_AFRL_AFSEL1_Msk;
-	GPIOA->AFR[0] |= (GPIO_AF1_TIM2 << GPIO_AFRL_AFSEL1_Pos);
-	
-	//init GPIO alternante fonction for interruption
-	GPIOA->MODER &=~ (GPIO_MODER_MODE5_Msk | GPIO_MODER_MODE12_Msk | GPIO_MODER_MODE8_Msk); // init PA5 
-	GPIOA->MODER |= GPIO_MODER_MODE5_0 | GPIO_MODER_MODE12_0; // PA5 output
+	GPIOA->AFR[0] &=~ GPIO_AFRL_AFRL1;
+	GPIOA->AFR[0] |= GPIO_AFRL_AFRL1_1;
 	
 	
-	//inti timer
-	TIM2->CR1 &=~ (TIM_CR1_CMS_0 | TIM_CR1_CMS_1); //EDGE ALIGNED	
-	TIM2->CR1 &=~ (1<<TIM_CR1_DIR_Pos); // upcounter
-	TIM2->PSC = 179; //prescaler for 1MHz
-	TIM2->ARR = 100; //50us
-	TIM2->CCMR1 &=~ (TIM_CCMR1_CC2S_Msk); //channel is output
-	TIM2->CCMR1 |= (TIM_CCMR1_OC2M_2  | TIM_CCMR1_OC2M_1); //OUTPUT COMPARE PWM MODE 1
-	TIM2->CCR2 = 50; //duty cycle 1/2
-	TIM2->CCER |= TIM_CCER_CC2E;
-	TIM2->CR1 |= TIM_CR1_CEN;
-	// init interrupt
-	TIM2->DIER |= TIM_DIER_UIE;
-	TIM2 ->SR &=~ TIM_SR_UIF;
 	
-	NVIC_EnableIRQ(TIM2_IRQn);
+	//init timer
+	TIM5->CR1 &=~ (TIM_CR1_CMS_0 | TIM_CR1_CMS_1); //Edge align
+	TIM5->CR1 &=~ TIM_CR1_DIR; // upcounter
+	TIM5->PSC = 1011; //prescaler for 1MHz
+	TIM5->ARR = 99999; //100ms 
+	TIM5->CR1 |= TIM_CR1_URS; //only overflow for IT
+	TIM5->CCMR1 &=~ TIM_CCMR1_CC2S;
+	TIM5->CCMR1 |= TIM_CCMR1_CC2S_0;
+	TIM5->CCER &=~ (TIM_CCER_CC2NP | TIM_CCER_CC2P);
+	TIM5->CCER |= TIM_CCER_CC2P;
+	TIM5->CCER |= TIM_CCER_CC2E;
+	TIM5->SMCR &=~ (TIM_SMCR_SMS | TIM_SMCR_TS);
+	TIM5->SMCR |= TIM_SMCR_TS_2 | TIM_SMCR_TS_1;
+	TIM5->SMCR |= TIM_SMCR_SMS_2;
+	TIM5->DIER |= TIM_DIER_CC2IE | TIM_DIER_UIE;
+	TIM5->EGR |= TIM_EGR_UG;
+	TIM5 ->SR = 0;
+	
+	NVIC_SetPriority(TIM5_IRQn,2);
+	NVIC_ClearPendingIRQ(TIM5_IRQn);
+	NVIC_EnableIRQ(TIM5_IRQn);
+	TIM5->CR1 |= TIM_CR1_CEN;
 	
 	
 	while(1) 
